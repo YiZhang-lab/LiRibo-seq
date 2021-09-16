@@ -1,0 +1,14 @@
+{
+    "sample" : "1C_rep1",
+    "fastq" : ["/totalRNA/fastq/OneCell_12hpf_totalRNA_rep1_S2_R1_001.fastq.gz", "/totalRNA/fastq/OneCell_12hpf_totalRNA_rep1_S2_R2_001.fastq.gz"],
+    "workdir" : "/totalRNA/1C_rep1",
+    "readLength" : 100,
+    "minLength" : 50,
+    "adaptor" : "TruSeq3-PE-SMRT-TotalRNA",
+    "trimDir" : "/tools/Trimmomatic",
+    "refDir" : "/reference/mouse",
+    "chrSize" : "/reference/GRCm38.size",
+    "threads" : 8
+}
+
+

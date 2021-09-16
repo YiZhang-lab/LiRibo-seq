@@ -1,0 +1,172 @@
+configfile: "config.json"
+
+
+rule all:
+    input:
+        quant = config["workdir"] + '/' + config["sample"] + '.quant.pdf',
+        qc_raw = config["workdir"] + '/' + config["sample"] + '_fastqc_raw',
+        qc_clean = config["workdir"] + '/' + config["sample"] + '_fastqc_clean',
+        signal_u1 = config["workdir"] + '/' + config["sample"] + '.signal.Unique.str1.bw',
+        signal_u2 = config["workdir"] + '/' + config["sample"] + '.signal.Unique.str2.bw',
+        signal_um1 = config["workdir"] + '/' + config["sample"] + '.signal.UniqueMultiple.str1.bw',
+        signal_um2 = config["workdir"] + '/' + config["sample"] + '.signal.UniqueMultiple.str2.bw'
+
+
+rule fastqc_raw:
+    input:
+        config["fastq"]
+    output:
+        directory(config["workdir"] + '/{sample}_fastqc_raw')
+    shell:
+        """
+        mkdir {output}
+        fastqc -o {output} {input}
+        rm -f {output}/*.zip
+        """
+
+
+rule clean_raw_reads:
+    input:
+        config["fastq"]
+    output:
+        temp(config["workdir"] + '/{sample}.clean.fq')
+    shell:
+        "cutadapt -m 20 -u 3 -a AAAAAAAA {input} > {output}"
+
+
+rule remove_rRNA_tRNA:
+    input:
+        config["workdir"] + '/{sample}.clean.fq'
+    output:
+        temp(config["workdir"] + '/{sample}.clean.rmr.fq')
+    params:
+        ref = config["rRNA_fasta"]
+    threads:
+        config["threads"]
+    shell:
+        "bowtie2 --quiet -p {threads} -x {params.ref} -U {input} | samtools fastq -n -f 0x4 - > {output}"
+
+
+rule fastqc_clean:
+    input:
+        config["workdir"] + '/{sample}.clean.rmr.fq'
+    output:
+        directory(config["workdir"] + '/{sample}_fastqc_clean')
+    shell:
+        """
+        mkdir {output}
+        fastqc -o {output} {input}
+        rm -f {output}/*.zip
+        """
+
+
+rule mapping:
+    input:
+        config["workdir"] + '/{sample}.clean.rmr.fq'
+    output:
+        transcript = temp(config["workdir"] + '/{sample}.aligned.toTranscriptome.out.bam'),
+        genome = config["workdir"] + '/{sample}.aligned.toGenome.bam'
+    params:
+        ref = config["refDir"],
+        wd = config["workdir"]
+    threads:
+        config["threads"]
+    shell:
+        """
+        STAR --genomeDir {params.ref}/STAR_RIBO_RL30 --readFilesIn {input} --outFileNamePrefix {params.wd}/ \
+             --runThreadN {threads} --outSAMunmapped Within --outFilterType BySJout \
+             --outSAMattributes NH HI AS NM MD --alignEndsType EndToEnd --outFilterMismatchNmax 2 \
+             --alignIntronMin 20 --alignIntronMax 1000000 \
+             --alignSJoverhangMin 8 --alignSJDBoverhangMin 1 --sjdbScore 1 --genomeLoad LoadAndRemove --limitBAMsortRAM 10000000000 \
+             --outSAMtype BAM SortedByCoordinate --quantMode TranscriptomeSAM
+        
+        mv {params.wd}/Aligned.toTranscriptome.out.bam {output.transcript}
+        mv {params.wd}/Aligned.sortedByCoord.out.bam {output.genome}
+        rm {params.wd}/Log.out {params.wd}/Log.progress.out
+        """
+
+
+rule sort_bam:
+    input:
+        config["workdir"] + '/{sample}.aligned.toTranscriptome.out.bam'
+    output:
+        config["workdir"] + '/{sample}.aligned.toTranscriptome.bam'
+    threads:
+        config["threads"]
+    shell:
+        "cat <( samtools view -H {input} ) <( samtools view -@ {threads} {input} | "
+        "sort -S 16G ) | "
+        "samtools view -@ {threads} -bS - > {output}"
+
+
+rule rsem:
+    input:
+        config["workdir"] + '/{sample}.aligned.toTranscriptome.bam'
+    output:
+        config["workdir"] + '/{sample}.quant.genes.results',
+        config["workdir"] + '/{sample}.quant.isoforms.results'
+    params:
+        ref = config["refDir"],
+        wd = config["workdir"]
+    log:
+        config["workdir"] + '/Log.rsem.{sample}'
+    threads:
+        config["threads"]
+    shell:
+        "rsem-calculate-expression --alignments --estimate-rspd --calc-ci --no-bam-output --seed 12345 -p {threads} --ci-memory 30000 "
+        "    --strandedness forward {input} {params.ref}/RSEMref_RIBO/RSEMref {params.wd}/{wildcards.sample}.quant 1>{log} 2>&1"
+
+
+rule rsem_qc:
+    input:
+        config["workdir"] + '/{sample}.quant.genes.results',
+        config["workdir"] + '/{sample}.quant.isoforms.results'
+    output:
+        config["workdir"] + '/{sample}.quant.pdf'
+    params:
+        wd = config["workdir"]
+    shell:
+        "rsem-plot-model {params.wd}/{wildcards.sample}.quant {output}"
+
+
+rule generate_signal:
+    input:
+        config["workdir"] + '/{sample}.aligned.toGenome.bam'
+    output:
+        u1 = temp(config["workdir"] + '/{sample}.signal.Unique.str1.bg'),
+        u2 = temp(config["workdir"] + '/{sample}.signal.Unique.str2.bg'),
+        um1 = temp(config["workdir"] + '/{sample}.signal.UniqueMultiple.str1.bg'),
+        um2 = temp(config["workdir"] + '/{sample}.signal.UniqueMultiple.str2.bg')
+    params:
+        wd = config["workdir"]
+    shell:
+        """
+        STAR --runMode inputAlignmentsFromBAM --inputBAMfile {input} --outWigType bedGraph --outWigStrand Stranded \
+            --outFileNamePrefix {params.wd}/{wildcards.sample}_ --outWigReferencesPrefix chr
+        
+        mv {params.wd}/{wildcards.sample}_Signal.Unique.str1.out.bg {output.u1}
+        mv {params.wd}/{wildcards.sample}_Signal.Unique.str2.out.bg {output.u2}
+        mv {params.wd}/{wildcards.sample}_Signal.UniqueMultiple.str1.out.bg {output.um1}
+        mv {params.wd}/{wildcards.sample}_Signal.UniqueMultiple.str2.out.bg {output.um2}
+        rm {params.wd}/{wildcards.sample}_Log.out
+        """
+
+
+rule bedGraph_to_bigWig:
+    input:
+        config["workdir"] + '/{sample}.signal.{um}.{str}.bg'
+    output:
+        config["workdir"] + '/{sample}.signal.{um}.{str}.bw'
+    params:
+        chrSize = config["chrSize"]
+    shell:
+        """
+        LC_COLLATE=C sort -k1,1 -k2,2n {input} > {input}.sorted
+        bedGraphToBigWig {input}.sorted {params.chrSize} {output}
+        rm {input}.sorted
+        """
+
+
+
+
+

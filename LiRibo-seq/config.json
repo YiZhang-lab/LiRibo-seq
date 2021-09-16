@@ -1,0 +1,10 @@
+{
+    "sample" : "mESC_rep1",
+    "fastq" : "/liRibo/fastq/liRiboseq_ESC_5k_rep1.fastq.gz",
+    "workdir" : "/liRibo/mESC_rep1",
+    "refDir" : "/reference/mouse",
+    "chrSize" : "/reference/GRCm38.size",
+    "rRNA_fasta" : "/reference/rRNA/SILVA_138.1_and_GtRNAdb_tRNAs.mm10.fasta",
+    "threads" : 8
+}
+
